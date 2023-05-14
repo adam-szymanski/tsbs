@@ -1,10 +1,12 @@
 package load
 
 import (
-	"github.com/timescale/tsbs/pkg/targets"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/timescale/tsbs/pkg/targets"
 )
 
 type noFlowBenchmarkRunner struct {
@@ -12,6 +14,7 @@ type noFlowBenchmarkRunner struct {
 }
 
 func (l *noFlowBenchmarkRunner) RunBenchmark(b targets.Benchmark) {
+	fmt.Println("1")
 	wg, start := l.preRun(b)
 
 	var numChannels uint
