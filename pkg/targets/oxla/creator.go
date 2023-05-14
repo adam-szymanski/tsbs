@@ -134,7 +134,7 @@ func (d *dbCreator) getFieldAndIndexDefinitions(tableName string, columns []stri
 			fieldType = "TEXT"
 		}
 
-		fieldDefs = append(fieldDefs, fmt.Sprintf("%s %s", field, fieldType))
+		fieldDefs = append(fieldDefs, fmt.Sprintf("\"%s\" %s", field, fieldType))
 		// If the user specifies indexes on additional fields, add them to
 		// our index definitions until we've reached the desired number of indexes
 	}
@@ -198,6 +198,9 @@ func generateTagsTableQuery(dbName string, tagNames, tagTypes []string) string {
 func MustExec(db *sql.DB, query string, args ...interface{}) sql.Result {
 	r, err := db.Exec(query, args...)
 	if err != nil {
+		if len(query) > 100 {
+			query = query[:100]
+		}
 		fmt.Printf("could not execute sql: %s", query)
 		panic(err)
 	}

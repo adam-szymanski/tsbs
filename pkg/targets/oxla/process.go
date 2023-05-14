@@ -241,9 +241,9 @@ func genBatchInsertStmt(dbName string, tableName string, cols []string, dataRows
 
 			switch v := val.(type) {
 			case float32:
-				insertStmt.WriteString(fmt.Sprint(v))
+				insertStmt.WriteString(strconv.FormatFloat(float64(v), 'f', 8, 32))
 			case float64:
-				insertStmt.WriteString(fmt.Sprint(v))
+				insertStmt.WriteString(strconv.FormatFloat(v, 'f', 8, 64))
 			case int32:
 				insertStmt.WriteString(fmt.Sprint(v))
 			case int64:
@@ -252,8 +252,18 @@ func genBatchInsertStmt(dbName string, tableName string, cols []string, dataRows
 				insertStmt.WriteString(v.In(time.UTC).Format("'2006-01-02 15:04:05.999999999'"))
 			case nil:
 				insertStmt.WriteString("NULL")
+			case map[string]interface{}:
+				insertStmt.WriteString("'")
+				bytes, err := json.Marshal(v)
+				if err != nil {
+					fatal("Can't serialize ", v)
+				}
+				if _, err = insertStmt.Write(bytes); err != nil {
+					fatal(err.Error())
+				}
+				insertStmt.WriteString("'")
 			default:
-				fatal("uknown type: ", reflect.TypeOf(val))
+				fatal("uknown type: ", reflect.TypeOf(val), val, " when inserting to table: ", insertStmt)
 			}
 			if j+1 < colsNum {
 				insertStmt.WriteString(",")
