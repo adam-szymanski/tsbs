@@ -92,12 +92,12 @@ func (d *Devops) MaxAllCPU(qi query.Query, nHosts int, duration time.Duration) {
 
 	sql := fmt.Sprintf(`
         SELECT
-            TIMESTAMP_TRUNC(created_at, HOUR) AS hour,
+            TIMESTAMP_TRUNC("time", HOUR) AS t,
             %s
-        FROM cpu
-        WHERE %s AND (created_at >= '%s') AND (created_at < '%s')
-        GROUP BY hour
-        ORDER BY hour
+        FROM benchmark.cpu
+        WHERE %s AND ("time" >= '%s') AND ("time" < '%s')
+        GROUP BY TIMESTAMP_TRUNC("time", HOUR)
+        ORDER BY TIMESTAMP_TRUNC("time", HOUR);
         `,
 		strings.Join(selectClauses, ", "),
 		d.getHostWhereString(nHosts),

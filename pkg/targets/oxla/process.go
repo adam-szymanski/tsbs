@@ -18,14 +18,13 @@ import (
 )
 
 const (
-	insertTagsSQL = `INSERT INTO tags(%s) VALUES %s`
-	getTagsSQL    = `SELECT * FROM tags`
-	numExtraCols  = 2 // one for json, one for tags_id
+	numExtraCols = 2 // one for json, one for tags_id
 )
 
 type syncCSI struct {
 	m     map[string]int64
 	mutex *sync.RWMutex
+	id    int64
 }
 
 func newSyncCSI() *syncCSI {
@@ -48,7 +47,7 @@ func subsystemTagsToJSON(tags []string) map[string]interface{} {
 	return jsonToReturn
 }
 
-func (p *processor) insertTags(dbName string, db *sql.DB, tagRows [][]string) map[string]int64 {
+func (p *processor) insertTags(dbName string, db *sql.DB, tagRows []*newTag) {
 	tagCols := tableCols[tagsKey]
 	cols := tagCols
 	values := make([]string, 0)
@@ -56,7 +55,7 @@ func (p *processor) insertTags(dbName string, db *sql.DB, tagRows [][]string) ma
 	if p.opts.UseJSON {
 		cols = []string{"tagset"}
 		for _, row := range tagRows {
-			jsonValues := convertValsToJSONBasedOnType(row[:commonTagsLen], p.opts.TagColumnTypes[:commonTagsLen])
+			jsonValues := convertValsToJSONBasedOnType(row.tags[:commonTagsLen], p.opts.TagColumnTypes[:commonTagsLen])
 			jsonX := "('{"
 			for i, k := range tagCols {
 				if i != 0 {
@@ -69,15 +68,13 @@ func (p *processor) insertTags(dbName string, db *sql.DB, tagRows [][]string) ma
 		}
 	} else {
 		for _, val := range tagRows {
-			sqlValues := convertValsToSQLBasedOnType(val[:commonTagsLen], p.opts.TagColumnTypes[:commonTagsLen])
-			row := fmt.Sprintf("(%s)", strings.Join(sqlValues, ","))
+			sqlValues := convertValsToSQLBasedOnType(val.tags[:commonTagsLen], p.opts.TagColumnTypes[:commonTagsLen])
+			row := fmt.Sprintf("(%d, %s)", val.id, strings.Join(sqlValues, ","))
 			values = append(values, row)
 		}
 	}
-	res := MustQuery(db, fmt.Sprintf(`INSERT INTO %s.tags(%s) VALUES %s`, dbName, strings.Join(cols, ","), strings.Join(values, ",")))
-
-	ret := p.sqlTagsToCacheLine(res, tagCols)
-	return ret
+	query := fmt.Sprintf(`INSERT INTO %s.tags(id,%s) VALUES %s`, dbName, strings.Join(cols, ","), strings.Join(values, ","))
+	MustExec(db, query)
 }
 
 func (p *processor) sqlTagsToCacheLine(res *sql.Rows, tagCols []string) map[string]int64 {
@@ -170,6 +167,11 @@ func (p *processor) splitTagsAndMetrics(rows []*insertData, dataCols int) ([][]s
 	return tagRows, dataRows, numMetrics
 }
 
+type newTag struct {
+	tags []string
+	id   int64
+}
+
 func (p *processor) processCSI(tableName string, rows []*insertData) uint64 {
 	colLen := len(tableCols[tableName]) + numExtraCols
 	if p.opts.InTableTag {
@@ -178,21 +180,20 @@ func (p *processor) processCSI(tableName string, rows []*insertData) uint64 {
 	tagRows, dataRows, numMetrics := p.splitTagsAndMetrics(rows, colLen)
 
 	// Check if any of these tags has yet to be inserted
-	newTags := make([][]string, 0, len(rows))
-	p._csi.mutex.RLock()
+	newTags := make([]*newTag, 0, len(rows))
+	p._csi.mutex.Lock()
 	for _, cols := range tagRows {
 		if _, ok := p._csi.m[cols[0]]; !ok {
-			newTags = append(newTags, cols)
+			id := p._csi.id
+			p._csi.id++
+			newTag := &newTag{tags: cols, id: id}
+			newTags = append(newTags, newTag)
+			p._csi.m[cols[0]] = id
 		}
 	}
-	p._csi.mutex.RUnlock()
+	p._csi.mutex.Unlock()
 	if len(newTags) > 0 {
-		p._csi.mutex.Lock()
-		res := p.insertTags(p.dbName, p._db, newTags)
-		for k, v := range res {
-			p._csi.m[k] = v
-		}
-		p._csi.mutex.Unlock()
+		p.insertTags(p.dbName, p._db, newTags)
 	}
 
 	p._csi.mutex.RLock()
@@ -276,17 +277,6 @@ func genBatchInsertStmt(dbName string, tableName string, cols []string, dataRows
 		}
 	}
 	return insertStmt.String()
-}
-
-func flatten(dataRows [][]interface{}) []interface{} {
-	flattened := make([]interface{}, len(dataRows)*len(dataRows[0]))
-	for i, row := range dataRows {
-		cols := len(row)
-		for j := range row {
-			flattened[i*cols+j] = row[j]
-		}
-	}
-	return flattened
 }
 
 func (p *processor) Init(_ int, doLoad, hashWorkers bool) {
